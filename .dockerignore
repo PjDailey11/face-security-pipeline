@@ -1,0 +1,9 @@
+__pycache__
+.git
+.pytest_cache
+.ruff_cache
+data/chroma_faces/**
+runs/
+*.pt
+.env
+.venv

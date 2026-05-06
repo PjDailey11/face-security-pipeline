@@ -1,0 +1,11 @@
+# Ultralytics YOLO dataset layout for single-class "face".
+# Prepare folders:
+#   datasets/faces/images/{train,val}/*.jpg
+#   datasets/faces/labels/{train,val}/*.txt  # YOLO normalized xywh per line
+
+path: datasets/faces
+train: images/train
+val: images/val
+names:
+  0: face
+nc: 1

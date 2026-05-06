@@ -1,0 +1,63 @@
+# Documented hyperparameters for the face-security pipeline.
+# YOLOv8 face detection uses Ultralytics under the hood; values below mirror train_yolov8_face.py CLI overrides.
+
+yolov8_face_detection:
+  description: "Transfer learning from COCO-pretrained YOLOv8 weights; backbone partially frozen."
+  base_weights: "yolov8n.pt" # COCO pretrained checkpoint (Ultralytics hub)
+  imgsz: 640
+  epochs: 100
+  batch_size: 16
+  workers: 8
+  patience: 25
+  optimizer: "AdamW"
+  lr0: 0.001 # initial learning rate
+  lrf: 0.01 # final LR fraction (cosine schedule: lr0 * lrf at last epoch)
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  freeze_backbone_layers: 10 # freeze first N layers (Ultralytics freeze=N)
+  mosaic: 1.0 # mosaic augmentation probability (1.0 during mosaic_epochs window)
+  mosaic_epochs: 80 # Ultralytics default-style mosaic disable schedule end
+  mixup: 0.0 # optional; increase cautiously for detection
+  copy_paste: 0.0
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  degrees: 10.0 # rotation for viewpoint diversity
+  translate: 0.1
+  scale: 0.5
+  shear: 2.0
+  perspective: 0.0001
+  flipud: 0.0
+  fliplr: 0.5
+  close_mosaic: 10 # epochs before end to disable mosaic
+  amp: true # mixed precision when CUDA available
+
+embedding_inception_resnet_v1:
+  description: "High-dimensional embeddings via InceptionResnetV1 (facenet-pytorch, VGGFace2 pretrained)."
+  input_size: 160
+  embedding_dim: 512
+  normalize_embeddings: true # L2 before cosine similarity
+  distance_metric: "cosine"
+
+antispoof_texture_cnn:
+  description: "Binary CNN emphasizing micro-texture; depth cues optional via stereo/IR in hardware."
+  imgsz: 224
+  epochs: 40
+  batch_size: 32
+  lr: 0.0003
+  weight_decay: 0.0001
+  scheduler: "cosine"
+  label_smoothing: 0.05
+  augmentations:
+    jpeg_compression: [60, 95]
+    gaussian_noise: [0.001, 0.02]
+    motion_blur_prob: 0.15
+
+privacy:
+  on_device_only: true
+  transmit_biometrics: false
+  auto_redact_unknown: true
+  similarity_threshold_enrolled: 0.35 # cosine distance threshold (facenet-pytorch style; tune on val)

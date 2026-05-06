@@ -1,0 +1,29 @@
+# Unified inference pipeline paths and toggles (override via env PIPELINE_CONFIG).
+
+paths:
+  yolo_weights: "${YOLO_WEIGHTS:weights/yolov8_face.pt}"
+  antispoof_weights: "${ANTISPOOF_WEIGHTS:weights/antispoof.pt}"
+  chroma_persist_dir: "${CHROMA_DIR:data/chroma_faces}"
+  landmark_model: "mediapipe_face_mesh" # lightweight landmark bundle inside mediapipe
+
+inference:
+  yolo_conf: 0.35
+  yolo_iou: 0.45
+  device: "${TORCH_DEVICE:cuda:0}" # fallback to cpu in code if unavailable
+  max_faces_per_frame: 20
+  embedding_batch_size: 8
+
+verification:
+  cosine_similarity_threshold: 0.65 # higher = stricter match (similarity, not distance)
+  unknown_redact_blur_sigma: 25
+
+liveness:
+  antispoof_prob_live_min: 0.55
+
+optional_modules:
+  attendance_postgres: "${ATTENDANCE_DATABASE_URL:}"
+  mask_detection_weights: "${MASK_YOLO_WEIGHTS:}" # optional second Ultralytics model
+
+privacy:
+  allow_frame_disk_write: true
+  redact_unknown_before_save: true

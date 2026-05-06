@@ -1,0 +1,31 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      TORCH_DEVICE: cpu
+      YOLO_WEIGHTS: /app/weights/yolov8_face.pt
+      ANTISPOOF_WEIGHTS: /app/weights/antispoof.pt
+      CHROMA_DIR: /app/data/chroma_faces
+      REDACT_UNKNOWN: "true"
+      SKIP_MODEL_INIT: "false"
+      # ATTENDANCE_DATABASE_URL: postgresql+psycopg2://face:face@db:5432/faces
+    volumes:
+      - ./data:/app/data
+      - ./weights:/app/weights
+
+  # Uncomment for optional attendance logging (PostgreSQL).
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: face
+  #     POSTGRES_PASSWORD: face
+  #     POSTGRES_DB: faces
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+
+# volumes:
+#   pgdata:

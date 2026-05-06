@@ -1,0 +1,10 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.env
+data/chroma_faces/
+data/captures/
+runs/
+weights/*.pt
+*.pyc

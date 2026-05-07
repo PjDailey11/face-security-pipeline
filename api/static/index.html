@@ -202,6 +202,12 @@
       let camStream = null;
       let liveOn = false;
       let liveTimer = null;
+      let liveBusy = false;
+      let liveRenderRaf = null;
+      let lastLivePayload = null;
+      let lastLayout = null; // {x,y,w,h,srcW,srcH}
+      const sendCanvas = document.createElement("canvas");
+      const sendCtx = sendCanvas.getContext("2d");
 
       async function checkHealth() {
         try {
@@ -283,33 +289,120 @@
         `;
       }
 
-      function drawOverlayVectors(bbox) {
+      function fitRect(srcW, srcH, dstW, dstH) {
+        const s = Math.min(dstW / srcW, dstH / srcH);
+        const w = Math.round(srcW * s);
+        const h = Math.round(srcH * s);
+        const x = Math.round((dstW - w) / 2);
+        const y = Math.round((dstH - h) / 2);
+        return { x, y, w, h, s };
+      }
+
+      function drawLiveVideoFrame() {
+        if (!camStream) return;
+        const srcW = video.videoWidth || 1280;
+        const srcH = video.videoHeight || 720;
+        const cw = canvas.width, ch = canvas.height;
+        ctx.clearRect(0, 0, cw, ch);
+        const r = fitRect(srcW, srcH, cw, ch);
+        ctx.drawImage(video, r.x, r.y, r.w, r.h);
+        lastLayout = { x: r.x, y: r.y, w: r.w, h: r.h, srcW, srcH };
+      }
+
+      function clamp(v, lo, hi) {
+        return Math.max(lo, Math.min(hi, v));
+      }
+
+      function mapBboxToCanvas(bbox, srcW, srcH) {
+        if (!lastLayout) return null;
         const [x1, y1, x2, y2] = bbox.map((v) => Number(v));
-        const cx = (x1 + x2) / 2;
-        const cy = (y1 + y2) / 2;
+        const lx = lastLayout.x, ly = lastLayout.y, lw = lastLayout.w, lh = lastLayout.h;
+        const sx = lw / srcW;
+        const sy = lh / srcH;
+        const cx1 = lx + x1 * sx;
+        const cy1 = ly + y1 * sy;
+        const cx2 = lx + x2 * sx;
+        const cy2 = ly + y2 * sy;
+        return [cx1, cy1, cx2, cy2];
+      }
+
+      function drawFaceTopology(bboxCanvas, t) {
+        const [x1, y1, x2, y2] = bboxCanvas;
+        const w = x2 - x1;
+        const h = y2 - y1;
+        const pad = Math.max(6, Math.min(w, h) * 0.06);
+        const xa = x1 + pad, ya = y1 + pad, xb = x2 - pad, yb = y2 - pad;
+        const ww = xb - xa, hh = yb - ya;
+        if (ww <= 4 || hh <= 4) return;
+
+        // A lightweight "face topology" mesh: normalized vertices + edges,
+        // projected into the bbox with slight animated warp.
+        const V = [
+          // outline
+          [0.12, 0.22], [0.10, 0.38], [0.10, 0.56], [0.14, 0.72], [0.24, 0.86],
+          [0.40, 0.92], [0.60, 0.92], [0.76, 0.86], [0.86, 0.72], [0.90, 0.56],
+          [0.90, 0.38], [0.88, 0.22],
+          // brows / eyes / nose / mouth
+          [0.26, 0.34], [0.36, 0.30], [0.46, 0.30], [0.54, 0.30], [0.64, 0.30], [0.74, 0.34],
+          [0.32, 0.42], [0.40, 0.42], [0.60, 0.42], [0.68, 0.42],
+          [0.50, 0.44], [0.46, 0.56], [0.50, 0.64], [0.54, 0.56],
+          [0.36, 0.74], [0.46, 0.78], [0.54, 0.78], [0.64, 0.74],
+          [0.50, 0.82],
+        ];
+        const E = [
+          // outline loop
+          [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,10],[10,11],
+          // forehead/brow line
+          [12,13],[13,14],[14,15],[15,16],[16,17],
+          // eyes
+          [18,19],[20,21],
+          // nose bridge + tip
+          [22,23],[23,24],[24,25],[22,25],
+          // mouth
+          [26,27],[27,28],[28,29],[26,29],[27,30],[28,30],
+          // connect to outline
+          [12,1],[17,10],[26,4],[29,7],
+        ];
+
+        const pts = V.map(([nx, ny], i) => {
+          const warp = 0.012 * Math.sin(t * 2.2 + i * 1.7);
+          const px = xa + (nx + warp) * ww;
+          const py = ya + (ny + warp * 0.6) * hh;
+          return [px, py];
+        });
+
         ctx.save();
-        ctx.strokeStyle = "rgba(106,136,255,0.95)";
-        ctx.lineWidth = 2;
-        // bounding box
-        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-        // crosshair vectors
+        ctx.strokeStyle = "rgba(106,136,255,0.85)";
+        ctx.lineWidth = Math.max(1.25, Math.min(2.25, Math.min(w, h) * 0.01));
         ctx.beginPath();
-        ctx.moveTo(cx, y1); ctx.lineTo(cx, y2);
-        ctx.moveTo(x1, cy); ctx.lineTo(x2, cy);
-        // diagonals (vector-like)
-        ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-        ctx.moveTo(x2, y1); ctx.lineTo(x1, y2);
+        for (const [a, b] of E) {
+          const [ax, ay] = pts[a];
+          const [bx, by] = pts[b];
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(bx, by);
+        }
         ctx.stroke();
+
+        // subtle vertex dots
+        ctx.fillStyle = "rgba(219,230,255,0.85)";
+        const r = clamp(Math.min(w, h) * 0.008, 1.5, 3.0);
+        for (const [px, py] of pts) {
+          ctx.beginPath();
+          ctx.arc(px, py, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.restore();
       }
 
-      function drawOverlaysOnCanvas(payload) {
+      function drawOverlaysOnCanvas(payload, srcW, srcH) {
         const faces = payload?.faces || [];
-        if (!Array.isArray(faces)) return;
+        if (!Array.isArray(faces) || !lastLayout) return;
+        const t = performance.now() / 1000;
         for (const f of faces) {
-          if (Array.isArray(f.bbox) && f.bbox.length === 4) {
-            drawOverlayVectors(f.bbox);
-          }
+          if (!Array.isArray(f.bbox) || f.bbox.length !== 4) continue;
+          const mapped = mapBboxToCanvas(f.bbox, srcW, srcH);
+          if (!mapped) continue;
+          drawFaceTopology(mapped, t);
         }
       }
 
@@ -327,12 +420,8 @@
         const cw = canvas.width, ch = canvas.height;
         ctx.clearRect(0, 0, cw, ch);
         const iw = img.width, ih = img.height;
-        const s = Math.min(cw / iw, ch / ih);
-        const w = Math.round(iw * s);
-        const h = Math.round(ih * s);
-        const x = Math.round((cw - w) / 2);
-        const y = Math.round((ch - h) / 2);
-        ctx.drawImage(img, x, y, w, h);
+        const r = fitRect(iw, ih, cw, ch);
+        ctx.drawImage(img, r.x, r.y, r.w, r.h);
       }
 
       async function blobFromCanvas() {
@@ -346,7 +435,7 @@
           drawImageToCanvas(img);
           currentBlob = await blobFromCanvas();
           URL.revokeObjectURL(url);
-          setOutputText("Image ready. Click Infer or Enroll.");
+          setOutputText("Image ready. Click Detect Faces.");
         };
         img.src = url;
       }
@@ -396,15 +485,16 @@
 
       async function startWebcam() {
         if (!navigator.mediaDevices?.getUserMedia) {
-          return setOutput("Webcam not supported in this browser.");
+          return setOutputText("Webcam not supported in this browser.");
         }
         try {
           camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
           video.srcObject = camStream;
-          video.hidden = false;
+          // Keep the <video> element hidden; the canvas is the single visible feed.
+          video.hidden = true;
           btnCapture.disabled = false;
           btnLive.disabled = false;
-          setOutputText("Webcam ready. Click Capture (or click the image area) to snapshot, then Infer/Enroll.");
+          setOutputText("Webcam ready. Click Capture to snapshot, or Live detect for continuous detection.");
         } catch (e) {
           setOutputText("Webcam permission denied.");
         }
@@ -439,57 +529,82 @@
         if (!camStream) return false;
         const vw = video.videoWidth || 1280;
         const vh = video.videoHeight || 720;
-        const tmp = document.createElement("canvas");
-        tmp.width = vw; tmp.height = vh;
-        tmp.getContext("2d").drawImage(video, 0, 0, vw, vh);
-        const img = new Image();
-        await new Promise((resolve) => {
-          img.onload = resolve;
-          img.src = tmp.toDataURL("image/jpeg", 0.92);
-        });
-        drawImageToCanvas(img);
+        const r = fitRect(vw, vh, canvas.width, canvas.height);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, r.x, r.y, r.w, r.h);
         currentBlob = await blobFromCanvas();
-        setOutputText("Snapshot captured. Click Infer or Enroll.");
+        setOutputText("Snapshot captured. Click Detect Faces.");
         return true;
       }
 
-      async function liveDetectOnce() {
-        if (!camStream) return;
-        // draw current video frame into canvas as the live feed
+      async function captureDownscaledBlobFromVideo(maxSide = 640) {
         const vw = video.videoWidth || 1280;
         const vh = video.videoHeight || 720;
-        const tmp = document.createElement("canvas");
-        tmp.width = vw; tmp.height = vh;
-        tmp.getContext("2d").drawImage(video, 0, 0, vw, vh);
+        const s = Math.min(1, maxSide / Math.max(vw, vh));
+        const sw = Math.max(1, Math.round(vw * s));
+        const sh = Math.max(1, Math.round(vh * s));
+        sendCanvas.width = sw;
+        sendCanvas.height = sh;
+        sendCtx.drawImage(video, 0, 0, sw, sh);
+        return await new Promise((resolve) => sendCanvas.toBlob(resolve, "image/jpeg", 0.72));
+      }
 
-        const img = new Image();
-        await new Promise((resolve) => {
-          img.onload = resolve;
-          img.src = tmp.toDataURL("image/jpeg", 0.8);
-        });
-        drawImageToCanvas(img);
-        currentBlob = await blobFromCanvas();
-
-        const fd = new FormData();
-        fd.append("file", new File([currentBlob], "frame.jpg", { type: "image/jpeg" }));
-        const r = await fetch("/v1/infer/image", { method: "POST", body: fd });
-        const j = await readResponseBody(r);
-        out.textContent = JSON.stringify(j, null, 2);
-        if (!r.ok) {
-          clearFaces();
-          facesEl.innerHTML = `<div class="face"><h3>Error</h3><div class="kv"><div>status</div><div>${r.status}</div><div>detail</div><div>${escapeHtml(JSON.stringify(j))}</div></div></div>`;
-          return;
+      async function liveDetectOnce() {
+        if (!camStream || liveBusy) return;
+        liveBusy = true;
+        try {
+          const blob = await captureDownscaledBlobFromVideo(640);
+          if (!blob) return;
+          const fd = new FormData();
+          fd.append("file", new File([blob], "frame.jpg", { type: "image/jpeg" }));
+          const r = await fetch("/v1/infer/image", { method: "POST", body: fd });
+          const j = await readResponseBody(r);
+          out.textContent = JSON.stringify(j, null, 2);
+          if (!r.ok) {
+            clearFaces();
+            facesEl.innerHTML = `<div class="face"><h3>Error</h3><div class="kv"><div>status</div><div>${r.status}</div><div>detail</div><div>${escapeHtml(JSON.stringify(j))}</div></div></div>`;
+            return;
+          }
+          lastLivePayload = j;
+          renderFaces(j);
+        } finally {
+          liveBusy = false;
         }
-        renderFaces(j);
-        drawOverlaysOnCanvas(j);
+      }
+
+      function liveRenderLoop() {
+        if (!liveOn) return;
+        drawLiveVideoFrame();
+        if (lastLivePayload && lastLayout) {
+          // Last payload bboxes are in the *sent* image coordinate space.
+          // Map them back to the original video coords, then to canvas via lastLayout.
+          const vw = video.videoWidth || lastLayout.srcW || 1280;
+          const vh = video.videoHeight || lastLayout.srcH || 720;
+          const sw = sendCanvas.width || vw;
+          const sh = sendCanvas.height || vh;
+          const sx = vw / sw;
+          const sy = vh / sh;
+          const faces = Array.isArray(lastLivePayload.faces) ? lastLivePayload.faces : [];
+          const adjusted = {
+            ...lastLivePayload,
+            faces: faces.map((f) => {
+              if (!Array.isArray(f.bbox) || f.bbox.length !== 4) return f;
+              const [x1, y1, x2, y2] = f.bbox.map((n) => Number(n));
+              return { ...f, bbox: [x1 * sx, y1 * sy, x2 * sx, y2 * sy] };
+            }),
+          };
+          drawOverlaysOnCanvas(adjusted, vw, vh);
+        }
+        liveRenderRaf = requestAnimationFrame(liveRenderLoop);
       }
 
       function startLiveDetect() {
         if (liveOn) return;
         liveOn = true;
         btnLive.textContent = "Stop live";
-        // ~6 FPS
-        liveTimer = setInterval(() => { liveDetectOnce().catch(() => {}); }, 160);
+        lastLivePayload = null;
+        liveTimer = setInterval(() => { liveDetectOnce().catch(() => {}); }, 320);
+        liveRenderRaf = requestAnimationFrame(liveRenderLoop);
       }
 
       function stopLiveDetect() {
@@ -497,6 +612,8 @@
         btnLive.textContent = "Live detect";
         if (liveTimer) clearInterval(liveTimer);
         liveTimer = null;
+        if (liveRenderRaf) cancelAnimationFrame(liveRenderRaf);
+        liveRenderRaf = null;
       }
 
       // Events

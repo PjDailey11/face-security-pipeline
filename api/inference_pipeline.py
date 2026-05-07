@@ -57,6 +57,10 @@ class UnifiedFaceSecurityPipeline:
 
         self._mesh_static = make_face_mesh_static()
         self._mesh_video = make_face_mesh_video() if video_mesh else None
+        if self._mesh_static is None:
+            logger.warning(
+                "MediaPipe FaceMesh unavailable in this environment. Face alignment disabled; using bbox crops."
+            )
 
         self.antispoof: AntiSpoofCNN | None = None
         self._as_tf = transforms.Compose([transforms.ToTensor()])
@@ -70,8 +74,9 @@ class UnifiedFaceSecurityPipeline:
         self.mask_detector = MaskDetector(cfg.mask_yolo_weights, device=self.device)
 
     def close(self) -> None:
-        self._mesh_static.close()
-        if self._mesh_video is not None:
+        if getattr(self._mesh_static, "close", None):
+            self._mesh_static.close()
+        if self._mesh_video is not None and getattr(self._mesh_video, "close", None):
             self._mesh_video.close()
 
     def _crop_face(self, frame_bgr: np.ndarray, bbox: list[float], margin: float = 0.18) -> np.ndarray:
@@ -110,9 +115,12 @@ class UnifiedFaceSecurityPipeline:
         for det in detections:
             bbox = det["bbox"]
             crop = self._crop_face(frame_bgr, bbox)
-            aligned = align_face_bgr_to_160(crop, mesh)
-            if aligned is None:
+            if mesh is None:
                 aligned = fallback_square_crop(crop)
+            else:
+                aligned = align_face_bgr_to_160(crop, mesh)
+                if aligned is None:
+                    aligned = fallback_square_crop(crop)
             face224 = cv2.resize(crop, (224, 224), interpolation=cv2.INTER_AREA)
 
             live_prob = self._liveness(face224)

@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 import cv2
-import mediapipe as mp
 import numpy as np
 
 
@@ -68,8 +67,30 @@ def fallback_square_crop(face_bgr: np.ndarray, margin: float = 0.15) -> np.ndarr
     return cv2.resize(crop, (160, 160), interpolation=cv2.INTER_AREA)
 
 
+def _mp_face_mesh_class() -> Any | None:
+    """
+    MediaPipe import varies across builds. Some environments ship a minimal `mediapipe`
+    without `mediapipe.solutions`. We treat alignment as optional and fall back to bbox crops.
+    """
+    try:
+        import mediapipe as mp  # type: ignore
+
+        sols = getattr(mp, "solutions", None)
+        if sols is None:
+            return None
+        face_mesh = getattr(sols, "face_mesh", None)
+        if face_mesh is None:
+            return None
+        return getattr(face_mesh, "FaceMesh", None)
+    except Exception:
+        return None
+
+
 def make_face_mesh_static() -> Any:
-    return mp.solutions.face_mesh.FaceMesh(
+    FaceMesh = _mp_face_mesh_class()
+    if FaceMesh is None:
+        return None
+    return FaceMesh(
         static_image_mode=True,
         max_num_faces=1,
         refine_landmarks=True,
@@ -79,7 +100,10 @@ def make_face_mesh_static() -> Any:
 
 
 def make_face_mesh_video() -> Any:
-    return mp.solutions.face_mesh.FaceMesh(
+    FaceMesh = _mp_face_mesh_class()
+    if FaceMesh is None:
+        return None
+    return FaceMesh(
         static_image_mode=False,
         max_num_faces=2,
         refine_landmarks=True,

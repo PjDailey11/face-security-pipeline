@@ -2,6 +2,21 @@
 
 Maintainers: append a new dated section after every major change (architecture, training defaults, API contracts, privacy posture).
 
+## 2026-05-07 — GitHub documentation (`README.md`)
+
+**What changed**
+
+- Added root `README.md` with app description, architecture overview (Mermaid), repository layout, local and Docker setup, training workflows, environment variable table, API reference, privacy notes, and links to `DEVLOG.md`.
+
+**Why**
+
+- Give contributors and operators a single entry point for cloning, configuring weights, running the API, and understanding privacy boundaries.
+
+**Next steps**
+
+- Add an explicit `LICENSE` if the repo should be reusable by third parties.
+- Optionally wire `cosine_similarity_threshold` / `antispoof_live_prob_min` to env-only overrides if operators must tune without code edits.
+
 ## 2026-05-06 — Initial end-to-end scaffold
 
 **What changed**

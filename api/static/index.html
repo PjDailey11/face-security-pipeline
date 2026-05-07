@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Face Security Pipeline</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background: #0b0f17; color: #e7edf7; }
+      .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 18px 64px; }
+      h1 { margin: 0 0 8px; font-size: 26px; letter-spacing: -0.02em; }
+      p { margin: 8px 0 0; color: #a9b6cc; line-height: 1.5; }
+      .grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 14px; margin-top: 18px; }
+      @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } }
+      .card { background: #111a2a; border: 1px solid #1f2a44; border-radius: 14px; padding: 14px; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .row > * { flex: 0 0 auto; }
+      label { font-size: 12px; color: #b9c6db; }
+      input[type="text"] { background: #0b1220; color: #e7edf7; border: 1px solid #243150; border-radius: 10px; padding: 10px 12px; width: 260px; outline: none; }
+      button { background: #2a4bff; color: white; border: 0; border-radius: 10px; padding: 10px 12px; cursor: pointer; font-weight: 600; }
+      button.secondary { background: #18233a; border: 1px solid #273553; }
+      button:disabled { opacity: 0.55; cursor: not-allowed; }
+      .drop { margin-top: 12px; border: 1px dashed #2a3a60; background: #0b1220; border-radius: 14px; padding: 14px; }
+      .drop.active { border-color: #6a88ff; box-shadow: 0 0 0 3px rgba(42, 75, 255, 0.25); }
+      .hint { font-size: 12px; color: #9fb0cc; }
+      canvas { width: 100%; height: auto; border-radius: 12px; background: #070a10; border: 1px solid #1f2a44; margin-top: 12px; }
+      pre { white-space: pre-wrap; word-break: break-word; background: #0b1220; border: 1px solid #243150; border-radius: 12px; padding: 12px; color: #dbe6ff; font-size: 12px; line-height: 1.45; }
+      .pill { display: inline-flex; gap: 8px; align-items: center; padding: 6px 10px; border-radius: 999px; border: 1px solid #243150; background: #0b1220; font-size: 12px; color: #b9c6db; }
+      .ok { color: #7dffb2; }
+      .bad { color: #ff7d7d; }
+      .video { width: 100%; border-radius: 12px; border: 1px solid #1f2a44; background: #070a10; margin-top: 12px; }
+      .small { font-size: 12px; color: #93a6c7; }
+      a { color: #9fb0ff; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Face Security Pipeline</h1>
+      <p>
+        Paste a face image (Ctrl+V), drag &amp; drop, or capture from webcam. This UI sends the image to
+        <code>/v1/enroll</code> or <code>/v1/infer/image</code> using multipart upload—no manual directories.
+      </p>
+
+      <div class="grid">
+        <div class="card">
+          <div class="row">
+            <span class="pill" id="healthPill">API: <span id="healthText">checking…</span></span>
+            <a class="small" href="/docs" target="_blank" rel="noreferrer">Open API docs</a>
+          </div>
+
+          <div class="drop" id="drop">
+            <div class="row">
+              <button class="secondary" id="btnPaste">Paste image</button>
+              <button class="secondary" id="btnPick">Pick file</button>
+              <button class="secondary" id="btnCam">Use webcam</button>
+              <input id="file" type="file" accept="image/*" hidden />
+            </div>
+            <p class="hint">
+              Tip: click here and press <b>Ctrl+V</b> after copying a screenshot or image. Dragging an image file onto this box works too.
+            </p>
+            <canvas id="canvas" width="960" height="540"></canvas>
+            <video class="video" id="video" playsinline autoplay muted hidden></video>
+            <div class="row" style="margin-top: 10px;">
+              <label>
+                Identity (for enroll):
+                <input id="identity" type="text" placeholder="e.g. alice" />
+              </label>
+              <button id="btnEnroll">Enroll</button>
+              <button id="btnInfer">Infer</button>
+              <button class="secondary" id="btnClear">Clear</button>
+            </div>
+            <p class="hint">
+              Enroll stores an embedding locally in ChromaDB. Infer returns bounding boxes, identity, similarity, and liveness (if enabled).
+            </p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="row" style="justify-content: space-between;">
+            <div>
+              <div class="small">Live preview (server-side)</div>
+              <div class="hint">If <code>REDACT_UNKNOWN=true</code>, unknown faces are blurred in this stream.</div>
+            </div>
+            <button class="secondary" id="btnToggleStream">Show stream</button>
+          </div>
+          <img id="mjpeg" class="video" alt="mjpeg stream" hidden />
+          <div style="margin-top: 12px;">
+            <div class="small">Result</div>
+            <pre id="out">Waiting for an image…</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const healthText = document.getElementById("healthText");
+      const healthPill = document.getElementById("healthPill");
+      const drop = document.getElementById("drop");
+      const file = document.getElementById("file");
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+      const out = document.getElementById("out");
+      const identity = document.getElementById("identity");
+      const video = document.getElementById("video");
+      const mjpeg = document.getElementById("mjpeg");
+
+      let currentBlob = null;
+      let streamOn = false;
+      let camStream = null;
+
+      async function checkHealth() {
+        try {
+          const r = await fetch("/health");
+          const j = await r.json();
+          healthText.textContent = j.status === "ok" ? "ok" : "bad";
+          healthText.className = j.status === "ok" ? "ok" : "bad";
+        } catch (e) {
+          healthText.textContent = "offline";
+          healthText.className = "bad";
+        }
+      }
+
+      function setOutput(obj) {
+        out.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+      }
+
+      function drawImageToCanvas(img) {
+        // Fit into canvas, preserving aspect
+        const cw = canvas.width, ch = canvas.height;
+        ctx.clearRect(0, 0, cw, ch);
+        const iw = img.width, ih = img.height;
+        const s = Math.min(cw / iw, ch / ih);
+        const w = Math.round(iw * s);
+        const h = Math.round(ih * s);
+        const x = Math.round((cw - w) / 2);
+        const y = Math.round((ch - h) / 2);
+        ctx.drawImage(img, x, y, w, h);
+      }
+
+      async function blobFromCanvas() {
+        return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+      }
+
+      async function setBlobFromImageFile(f) {
+        const url = URL.createObjectURL(f);
+        const img = new Image();
+        img.onload = async () => {
+          drawImageToCanvas(img);
+          currentBlob = await blobFromCanvas();
+          URL.revokeObjectURL(url);
+          setOutput("Image ready.");
+        };
+        img.src = url;
+      }
+
+      async function tryReadClipboardImage() {
+        // Requires user gesture in most browsers.
+        try {
+          const items = await navigator.clipboard.read();
+          for (const item of items) {
+            for (const type of item.types) {
+              if (type.startsWith("image/")) {
+                const b = await item.getType(type);
+                await setBlobFromImageFile(new File([b], "clipboard.png", { type }));
+                return true;
+              }
+            }
+          }
+        } catch (_) {}
+        return false;
+      }
+
+      async function enroll() {
+        if (!currentBlob) return setOutput("No image loaded yet.");
+        const name = identity.value.trim();
+        if (!name) return setOutput("Enter an identity name first.");
+        const fd = new FormData();
+        fd.append("identity", name);
+        fd.append("file", new File([currentBlob], "face.jpg", { type: "image/jpeg" }));
+        const r = await fetch("/v1/enroll", { method: "POST", body: fd });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return setOutput({ error: j, status: r.status });
+        setOutput(j);
+      }
+
+      async function infer() {
+        if (!currentBlob) return setOutput("No image loaded yet.");
+        const fd = new FormData();
+        fd.append("file", new File([currentBlob], "frame.jpg", { type: "image/jpeg" }));
+        const r = await fetch("/v1/infer/image", { method: "POST", body: fd });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return setOutput({ error: j, status: r.status });
+        setOutput(j);
+      }
+
+      function clearAll() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        currentBlob = null;
+        setOutput("Cleared.");
+      }
+
+      async function startWebcam() {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          return setOutput("Webcam not supported in this browser.");
+        }
+        try {
+          camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          video.srcObject = camStream;
+          video.hidden = false;
+          setOutput("Webcam ready. Click 'Infer' or 'Enroll' after taking a snapshot (click canvas).");
+        } catch (e) {
+          setOutput("Webcam permission denied.");
+        }
+      }
+
+      function stopWebcam() {
+        if (camStream) {
+          camStream.getTracks().forEach(t => t.stop());
+        }
+        camStream = null;
+        video.hidden = true;
+        video.srcObject = null;
+      }
+
+      function toggleStream() {
+        streamOn = !streamOn;
+        if (streamOn) {
+          mjpeg.src = "/v1/stream/mjpeg";
+          mjpeg.hidden = false;
+          document.getElementById("btnToggleStream").textContent = "Hide stream";
+        } else {
+          mjpeg.src = "";
+          mjpeg.hidden = true;
+          document.getElementById("btnToggleStream").textContent = "Show stream";
+        }
+      }
+
+      // Events
+      document.getElementById("btnPick").addEventListener("click", () => file.click());
+      file.addEventListener("change", (e) => {
+        const f = e.target.files?.[0];
+        if (f) setBlobFromImageFile(f);
+      });
+
+      document.getElementById("btnPaste").addEventListener("click", async () => {
+        const ok = await tryReadClipboardImage();
+        if (!ok) setOutput("Clipboard image read failed. Try clicking the box and pressing Ctrl+V, or drag & drop a file.");
+      });
+
+      document.getElementById("btnCam").addEventListener("click", async () => {
+        if (camStream) {
+          stopWebcam();
+          setOutput("Webcam stopped.");
+        } else {
+          await startWebcam();
+        }
+      });
+
+      canvas.addEventListener("click", async () => {
+        if (!camStream) return;
+        // Snapshot current video frame into canvas
+        const vw = video.videoWidth || 1280;
+        const vh = video.videoHeight || 720;
+        const tmp = document.createElement("canvas");
+        tmp.width = vw; tmp.height = vh;
+        tmp.getContext("2d").drawImage(video, 0, 0, vw, vh);
+        const img = new Image();
+        img.onload = async () => {
+          drawImageToCanvas(img);
+          currentBlob = await blobFromCanvas();
+          setOutput("Snapshot captured.");
+        };
+        img.src = tmp.toDataURL("image/jpeg", 0.92);
+      });
+
+      document.getElementById("btnEnroll").addEventListener("click", enroll);
+      document.getElementById("btnInfer").addEventListener("click", infer);
+      document.getElementById("btnClear").addEventListener("click", () => { stopWebcam(); clearAll(); });
+      document.getElementById("btnToggleStream").addEventListener("click", toggleStream);
+
+      // Drag/drop + paste
+      ["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, (e) => {
+        e.preventDefault(); e.stopPropagation(); drop.classList.add("active");
+      }));
+      ["dragleave","drop"].forEach(ev => drop.addEventListener(ev, (e) => {
+        e.preventDefault(); e.stopPropagation(); drop.classList.remove("active");
+      }));
+      drop.addEventListener("drop", (e) => {
+        const f = e.dataTransfer?.files?.[0];
+        if (f) setBlobFromImageFile(f);
+      });
+      drop.addEventListener("paste", async (e) => {
+        const items = e.clipboardData?.items || [];
+        for (const it of items) {
+          if (it.type.startsWith("image/")) {
+            const b = it.getAsFile();
+            if (b) return setBlobFromImageFile(b);
+          }
+        }
+      });
+
+      checkHealth();
+      setInterval(checkHealth, 5000);
+    </script>
+  </body>
+</html>
+

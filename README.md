@@ -135,7 +135,10 @@ From the **repository root** (so imports resolve):
 python run.py
 ```
 
-Open interactive docs: **http://127.0.0.1:8000/docs**
+Open:
+
+- **UI**: `http://127.0.0.1:8000/` (paste/drag/drop/capture images, then Enroll/Infer)
+- **API docs**: `http://127.0.0.1:8000/docs`
 
 ---
 

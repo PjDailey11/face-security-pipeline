@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +95,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Face Security Pipeline", lifespan=lifespan)
+
+# Built-in minimal UI (no frontend build step).
+STATIC_DIR = ROOT / "api" / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/")
+def index() -> Any:
+    index_file = STATIC_DIR / "index.html"
+    if not index_file.exists():
+        raise HTTPException(status_code=404, detail="UI not found")
+    return StreamingResponse(index_file.open("rb"), media_type="text/html")
 
 
 @app.get("/health")

@@ -121,6 +121,12 @@ Place checkpoints under `weights/`:
 
 After training (below), copy your best run’s `weights/best.pt` to `weights/yolov8_face.pt`.
 
+If you see `FileNotFoundError: weights\\yolov8_face.pt` on startup, you have three options:
+
+- **Best**: train/fine-tune and copy your checkpoint to `weights/yolov8_face.pt`.
+- **Quick boot**: set `YOLO_WEIGHTS=yolov8n.pt` (server boots, but it is **not** a face detector until fine-tuned).
+- **Smoke test**: set `SKIP_MODEL_INIT=true` to start the API without loading models (health/docs only).
+
 ### 6. Run the API
 
 From the **repository root** (so imports resolve):

@@ -7,10 +7,12 @@ Maintainers: append a new dated section after every major change (architecture, 
 **What changed**
 
 - Added root `README.md` with app description, architecture overview (Mermaid), repository layout, local and Docker setup, training workflows, environment variable table, API reference, privacy notes, and links to `DEVLOG.md`.
+- Made API startup more forgiving when default YOLO weights are missing (falls back to `yolov8n.pt` with a warning).
 
 **Why**
 
 - Give contributors and operators a single entry point for cloning, configuring weights, running the API, and understanding privacy boundaries.
+- Prevent first-run crashes when users haven’t trained/copied `weights/yolov8_face.pt` yet.
 
 **Next steps**
 

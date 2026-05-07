@@ -49,8 +49,28 @@ async def lifespan(app: FastAPI):
         yield
         return
 
+    # Make startup forgiving for first-time users:
+    # - If default weights path is missing, fall back to a COCO-pretrained YOLO checkpoint name
+    #   so the server can still boot (even though it won't be a proper face detector until fine-tuned).
+    # - If a custom weights path is configured and missing, fail with actionable guidance.
+    yolo_weights = settings.yolo_weights
+    if not yolo_weights.exists():
+        if yolo_weights.as_posix().endswith("weights/yolov8_face.pt"):
+            logger.warning(
+                "YOLO weights not found at '%s'. Falling back to 'yolov8n.pt' so the API can start. "
+                "For real face detection you must train/fine-tune and place your checkpoint at weights/yolov8_face.pt, "
+                "or set YOLO_WEIGHTS to a valid path.",
+                yolo_weights,
+            )
+            yolo_weights = Path("yolov8n.pt")
+        else:
+            raise RuntimeError(
+                f"YOLO weights not found at '{yolo_weights}'. "
+                "Fix YOLO_WEIGHTS (or place weights/yolov8_face.pt), or set SKIP_MODEL_INIT=true to start without models."
+            )
+
     cfg = PipelineConfig(
-        yolo_weights=settings.yolo_weights,
+        yolo_weights=yolo_weights,
         antispoof_weights=settings.antispoof_weights,
         chroma_dir=settings.chroma_dir,
         device=settings.torch_device,

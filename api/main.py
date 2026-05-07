@@ -10,7 +10,7 @@ from uuid import uuid4
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
@@ -107,7 +107,7 @@ def index() -> Any:
     index_file = STATIC_DIR / "index.html"
     if not index_file.exists():
         raise HTTPException(status_code=404, detail="UI not found")
-    return StreamingResponse(index_file.open("rb"), media_type="text/html")
+    return FileResponse(str(index_file))
 
 
 @app.get("/health")

@@ -1,6 +1,6 @@
 # Face Security Pipeline
 
-An **on-device** face detection and identity-verification stack aimed at privacy-conscious deployments: **YOLOv8** face localization (fine-tuned from COCO-pretrained weights), **MediaPipe** landmark alignment, **512-D embeddings** (InceptionResnetV1 via [`facenet-pytorch`](https://github.com/timesler/facenet-pytorch)), **local vector search** (ChromaDB + cosine similarity), an optional **anti-spoof CNN**, and a **FastAPI** service for images and camera streams.
+An **on-device** face detection and identity-verification stack aimed at privacy-conscious deployments: **YOLOv8** face localization (fine-tuned from COCO-pretrained weights), optional landmark alignment, **512-D embeddings** (InceptionResnetV1 via [`facenet-pytorch`](https://github.com/timesler/facenet-pytorch)), **local vector search** (ChromaDB + cosine similarity), optional **anti-spoof CNN**, and a **FastAPI** service with a built-in UI.
 
 **Biometric embeddings stay local.** There are no API endpoints that return raw embedding vectors to clients; optional PostgreSQL logging stores metadata only (identity labels and scores), not embeddings.
 
@@ -74,7 +74,18 @@ face-security-pipeline/
 
 ## Quick start (local)
 
-### 1. Clone
+## What you should expect (first run)
+
+- **UI loads** at `http://127.0.0.1:8000/`
+- Clicking **Infer** returns a JSON blob under “Result”
+- If you are using the fallback model `yolov8n.pt`, results will contain COCO classes like **`person`** (this is normal; it is not a face detector).
+- Identity verification only becomes meaningful after you **Enroll** at least one identity (stores vectors locally in Chroma).
+
+---
+
+## Step-by-step setup (Windows PowerShell)
+
+### 1) Clone
 
 ```bash
 git clone https://github.com/PjDailey11/face-security-pipeline.git
@@ -110,7 +121,71 @@ copy .env.example .env   # Windows
 
 See [Environment variables](#environment-variables) below.
 
-### 5. Weights
+### 5) Start the server (easiest path)
+
+You have two ways to start:
+
+#### Option A (recommended for first boot): use the built-in fallback
+
+Just run:
+
+```bash
+python run.py
+```
+
+If you have not trained a face model yet, the server will fall back to `yolov8n.pt` and print a warning. You can still use the UI, enroll, and test the pipeline wiring.
+
+#### Option B (smoke test only): start with no models
+
+This starts `/health` + `/docs` + the UI shell, but **Enroll/Infer will return 503**.
+
+```bash
+$env:SKIP_MODEL_INIT="true"
+python run.py
+```
+
+### 6) Open the UI
+
+- **UI**: `http://127.0.0.1:8000/`
+- **API docs**: `http://127.0.0.1:8000/docs`
+
+### 7) Use the UI (exact clicks)
+
+#### Infer (no enrollment required)
+
+1. Click **Pick file** (or **Paste image**).
+2. Click **Infer**.
+
+You should see `faces: [...]` appear on the right.
+
+#### Enroll (register one identity)
+
+1. Load an image (Pick file / Paste).
+2. Type a name in **Identity** (example: `alex`).
+3. Click **Enroll**.
+4. Load a different image of the same person.
+5. Click **Infer** → identity should become the enrolled name once similarity passes the threshold.
+
+#### Webcam
+
+1. Click **Use webcam**.
+2. Click the **large image area (canvas)** to take a snapshot (you should see “Snapshot captured.”).
+3. Click **Infer** or **Enroll**.
+
+> If webcam opens but Infer/Enroll says “No image loaded”, you didn’t capture a snapshot yet—click the canvas.
+
+---
+
+## Weights (to make it a real face recognizer)
+
+Right now the repo can run with a generic COCO YOLO model (`yolov8n.pt`) but that detects **person/tie/etc**, not faces.
+
+To make this app do face detection + recognition properly you need:
+
+- **`weights/yolov8_face.pt`**: a YOLO model fine-tuned for **face detection**
+- (Optional) **`weights/antispoof.pt`**: liveness classifier weights
+
+### Where to put weights
 
 Place checkpoints under `weights/`:
 
@@ -127,18 +202,37 @@ If you see `FileNotFoundError: weights\\yolov8_face.pt` on startup, you have thr
 - **Quick boot**: set `YOLO_WEIGHTS=yolov8n.pt` (server boots, but it is **not** a face detector until fine-tuned).
 - **Smoke test**: set `SKIP_MODEL_INIT=true` to start the API without loading models (health/docs only).
 
-### 6. Run the API
+---
 
-From the **repository root** (so imports resolve):
+## Troubleshooting (common first-time issues)
+
+### “POST /v1/enroll 500” and the UI shows `{ "error": {}, "status": 500 }`
+
+You’re likely on an older local checkout. Update first:
 
 ```bash
+git pull
 python run.py
 ```
 
-Open:
+### “AttributeError: 'NoneType' object has no attribute 'process'”
 
-- **UI**: `http://127.0.0.1:8000/` (paste/drag/drop/capture images, then Enroll/Infer)
-- **API docs**: `http://127.0.0.1:8000/docs`
+This happens when landmark alignment is unavailable and enrollment tried to call FaceMesh. Update:
+
+```bash
+git pull
+python run.py
+```
+
+### “FileNotFoundError: weights\\yolov8_face.pt”
+
+- **Best**: train/fine-tune and create `weights/yolov8_face.pt`
+- **Quick boot**: set `YOLO_WEIGHTS=yolov8n.pt` (boots, not a face detector)
+- **Smoke test**: set `SKIP_MODEL_INIT=true` (no models loaded)
+
+### “Why does it detect `person` instead of `face`?”
+
+Because you’re using `yolov8n.pt` (COCO). You need a face-finetuned detector at `weights/yolov8_face.pt`.
 
 ---
 

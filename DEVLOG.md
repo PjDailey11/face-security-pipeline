@@ -9,6 +9,7 @@ Maintainers: append a new dated section after every major change (architecture, 
 - Added root `README.md` with app description, architecture overview (Mermaid), repository layout, local and Docker setup, training workflows, environment variable table, API reference, privacy notes, and links to `DEVLOG.md`.
 - Made API startup more forgiving when default YOLO weights are missing (falls back to `yolov8n.pt` with a warning).
 - Added a built-in minimal UI served by FastAPI at `/` to **paste/drag-drop/capture** face images and call Enroll/Infer without managing input directories.
+- Overhauled instructions to a step-by-step checklist and added first-run troubleshooting for common errors (missing weights, COCO vs face detector, webcam snapshot flow).
 
 **Why**
 

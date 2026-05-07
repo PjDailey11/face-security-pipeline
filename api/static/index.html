@@ -120,6 +120,7 @@
               <button class="secondary" id="btnPick" title="Choose an image file from disk">Pick…</button>
               <button class="secondary" id="btnCam" title="Start/stop webcam preview">Use webcam</button>
               <button class="secondary" id="btnCapture" title="Capture the current webcam frame into the image area" disabled>Capture</button>
+              <button class="secondary" id="btnLive" title="Continuously detect faces from webcam" disabled>Live detect</button>
               <!-- 2) + 3) Single primary action near input controls -->
               <button class="primary" id="btnDetect" title="Run YOLO detection on the current image/frame">Detect Faces</button>
               <input id="file" type="file" accept="image/*" hidden />
@@ -186,6 +187,7 @@
       const video = document.getElementById("video");
       const mjpeg = document.getElementById("mjpeg");
       const btnCapture = document.getElementById("btnCapture");
+      const btnLive = document.getElementById("btnLive");
       const btnDetect = document.getElementById("btnDetect");
       const inputMode = document.getElementById("inputMode");
       const mTotal = document.getElementById("mTotal");
@@ -194,6 +196,8 @@
       let currentBlob = null;
       let streamOn = false;
       let camStream = null;
+      let liveOn = false;
+      let liveTimer = null;
 
       async function checkHealth() {
         try {
@@ -273,6 +277,36 @@
             </table>
           </div>
         `;
+      }
+
+      function drawOverlayVectors(bbox) {
+        const [x1, y1, x2, y2] = bbox.map((v) => Number(v));
+        const cx = (x1 + x2) / 2;
+        const cy = (y1 + y2) / 2;
+        ctx.save();
+        ctx.strokeStyle = "rgba(106,136,255,0.95)";
+        ctx.lineWidth = 2;
+        // bounding box
+        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+        // crosshair vectors
+        ctx.beginPath();
+        ctx.moveTo(cx, y1); ctx.lineTo(cx, y2);
+        ctx.moveTo(x1, cy); ctx.lineTo(x2, cy);
+        // diagonals (vector-like)
+        ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+        ctx.moveTo(x2, y1); ctx.lineTo(x1, y2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawOverlaysOnCanvas(payload) {
+        const faces = payload?.faces || [];
+        if (!Array.isArray(faces)) return;
+        for (const f of faces) {
+          if (Array.isArray(f.bbox) && f.bbox.length === 4) {
+            drawOverlayVectors(f.bbox);
+          }
+        }
       }
 
       async function readResponseBody(r) {
@@ -365,6 +399,7 @@
           video.srcObject = camStream;
           video.hidden = false;
           btnCapture.disabled = false;
+          btnLive.disabled = false;
           setOutputText("Webcam ready. Click Capture (or click the image area) to snapshot, then Infer/Enroll.");
         } catch (e) {
           setOutputText("Webcam permission denied.");
@@ -379,6 +414,8 @@
         video.hidden = true;
         video.srcObject = null;
         btnCapture.disabled = true;
+        btnLive.disabled = true;
+        stopLiveDetect();
       }
 
       function toggleStream() {
@@ -412,6 +449,52 @@
         return true;
       }
 
+      async function liveDetectOnce() {
+        if (!camStream) return;
+        // draw current video frame into canvas as the live feed
+        const vw = video.videoWidth || 1280;
+        const vh = video.videoHeight || 720;
+        const tmp = document.createElement("canvas");
+        tmp.width = vw; tmp.height = vh;
+        tmp.getContext("2d").drawImage(video, 0, 0, vw, vh);
+
+        const img = new Image();
+        await new Promise((resolve) => {
+          img.onload = resolve;
+          img.src = tmp.toDataURL("image/jpeg", 0.8);
+        });
+        drawImageToCanvas(img);
+        currentBlob = await blobFromCanvas();
+
+        const fd = new FormData();
+        fd.append("file", new File([currentBlob], "frame.jpg", { type: "image/jpeg" }));
+        const r = await fetch("/v1/infer/image", { method: "POST", body: fd });
+        const j = await readResponseBody(r);
+        out.textContent = JSON.stringify(j, null, 2);
+        if (!r.ok) {
+          clearFaces();
+          facesEl.innerHTML = `<div class="face"><h3>Error</h3><div class="kv"><div>status</div><div>${r.status}</div><div>detail</div><div>${escapeHtml(JSON.stringify(j))}</div></div></div>`;
+          return;
+        }
+        renderFaces(j);
+        drawOverlaysOnCanvas(j);
+      }
+
+      function startLiveDetect() {
+        if (liveOn) return;
+        liveOn = true;
+        btnLive.textContent = "Stop live";
+        // ~6 FPS
+        liveTimer = setInterval(() => { liveDetectOnce().catch(() => {}); }, 160);
+      }
+
+      function stopLiveDetect() {
+        liveOn = false;
+        btnLive.textContent = "Live detect";
+        if (liveTimer) clearInterval(liveTimer);
+        liveTimer = null;
+      }
+
       // Events
       document.getElementById("btnPick").addEventListener("click", () => file.click());
       file.addEventListener("change", (e) => {
@@ -438,6 +521,7 @@
       });
 
       btnCapture.addEventListener("click", captureFromWebcam);
+      btnLive.addEventListener("click", () => (liveOn ? stopLiveDetect() : startLiveDetect()));
 
       btnDetect.addEventListener("click", detectFaces);
       document.getElementById("btnToggleStream").addEventListener("click", toggleStream);
@@ -451,6 +535,7 @@
         document.getElementById("btnPick").style.display = isFile ? "" : "none";
         document.getElementById("btnCam").style.display = isWebcam ? "" : "none";
         document.getElementById("btnCapture").style.display = isWebcam ? "" : "none";
+        document.getElementById("btnLive").style.display = isWebcam ? "" : "none";
         if (!isWebcam && camStream) stopWebcam();
       }
 

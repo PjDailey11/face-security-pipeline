@@ -39,7 +39,13 @@ class FrameAnalysis(BaseModel):
 
 def get_pipeline() -> UnifiedFaceSecurityPipeline:
     if _pipeline is None:
-        raise RuntimeError("Pipeline not initialized")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Pipeline not initialized. If you started with SKIP_MODEL_INIT=true, set it to false. "
+                "Also ensure YOLO_WEIGHTS points to a valid checkpoint (or place weights/yolov8_face.pt)."
+            ),
+        )
     return _pipeline
 
 
@@ -75,6 +81,8 @@ async def lifespan(app: FastAPI):
         antispoof_weights=settings.antispoof_weights,
         chroma_dir=settings.chroma_dir,
         device=settings.torch_device,
+        detection_only=settings.detection_only,
+        face_only=settings.face_only,
         yolo_conf=settings.yolo_conf,
         yolo_iou=settings.yolo_iou,
         cosine_similarity_threshold=settings.cosine_similarity_threshold,

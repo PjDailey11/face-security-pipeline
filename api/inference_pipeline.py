@@ -27,6 +27,8 @@ class PipelineConfig:
     antispoof_weights: Path | None
     chroma_dir: Path
     device: str
+    detection_only: bool = True
+    face_only: bool = True
     yolo_conf: float = 0.35
     yolo_iou: float = 0.45
     cosine_similarity_threshold: float = 0.65
@@ -51,9 +53,10 @@ class UnifiedFaceSecurityPipeline:
             conf=cfg.yolo_conf,
             iou=cfg.yolo_iou,
             device=self.device,
+            face_only=cfg.face_only,
         )
-        self.embedder = FaceEmbeddingModel(device=self.device)
-        self.index = EmbeddingIndex(cfg.chroma_dir)
+        self.embedder = None if cfg.detection_only else FaceEmbeddingModel(device=self.device)
+        self.index = None if cfg.detection_only else EmbeddingIndex(cfg.chroma_dir)
 
         self._mesh_static = make_face_mesh_static()
         self._mesh_video = make_face_mesh_video() if video_mesh else None
@@ -64,14 +67,15 @@ class UnifiedFaceSecurityPipeline:
 
         self.antispoof: AntiSpoofCNN | None = None
         self._as_tf = transforms.Compose([transforms.ToTensor()])
-        if cfg.antispoof_weights and Path(cfg.antispoof_weights).exists():
-            self.antispoof = AntiSpoofCNN().eval().to(self.device)
-            ckpt = torch.load(cfg.antispoof_weights, map_location=self.device)
-            self.antispoof.load_state_dict(ckpt["model"])
-        else:
-            logger.warning("Anti-spoof weights missing — liveness scores disabled.")
+        if not cfg.detection_only:
+            if cfg.antispoof_weights and Path(cfg.antispoof_weights).exists():
+                self.antispoof = AntiSpoofCNN().eval().to(self.device)
+                ckpt = torch.load(cfg.antispoof_weights, map_location=self.device)
+                self.antispoof.load_state_dict(ckpt["model"])
+            else:
+                logger.warning("Anti-spoof weights missing — liveness scores disabled.")
 
-        self.mask_detector = MaskDetector(cfg.mask_yolo_weights, device=self.device)
+        self.mask_detector = None if cfg.detection_only else MaskDetector(cfg.mask_yolo_weights, device=self.device)
 
     def close(self) -> None:
         if getattr(self._mesh_static, "close", None):
@@ -106,7 +110,17 @@ class UnifiedFaceSecurityPipeline:
     def analyze_frame(self, frame_bgr: np.ndarray) -> list[dict[str, Any]]:
         mesh = self._mesh_video if self._mesh_video is not None else self._mesh_static
         detections = self.detector.predict(frame_bgr)[: self.cfg.max_faces_per_frame]
-        mask_map = self.mask_detector.predict_map(frame_bgr)
+        if self.cfg.detection_only:
+            return [
+                {
+                    "bbox": d["bbox"],
+                    "detection_confidence": d["confidence"],
+                    "class_name": "face",
+                }
+                for d in detections
+            ]
+
+        mask_map = self.mask_detector.predict_map(frame_bgr) if self.mask_detector is not None else {}
 
         faces_out: list[dict[str, Any]] = []
         crops_for_emb: list[np.ndarray] = []
